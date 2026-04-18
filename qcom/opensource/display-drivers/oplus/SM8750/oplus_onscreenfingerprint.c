@@ -2256,15 +2256,29 @@ int oplus_ofp_lhbm_handle(void *dsi_display)
 	bl_level = display->panel->bl_config.bl_level;
 	OFP_DEBUG("bl_level=%u\n", bl_level);
 
-	if (p_oplus_ofp_params->fp_press && bl_level) {
-		rc = oplus_ofp_set_panel_hbm(c_conn, true);
-		if (rc) {
-			OFP_ERR("failed to set panel hbm on\n");
-		}
-	} else if (!p_oplus_ofp_params->fp_press || !bl_level) {
-		rc = oplus_ofp_set_panel_hbm(c_conn, false);
-		if (rc) {
-			OFP_ERR("failed to set panel hbm off\n");
+	/* Also accept the hbm_enable DRM connector property as an LHBM trigger.
+	 * The display compositor sets DIM_LAYER and/or FINGERPRESS_LAYER when
+	 * UDFPS overlay layers are being composed (only during fingerprint
+	 * authentication), providing an auth-state-aware alternative to the
+	 * fp_press sysfs path. */
+	{
+		uint64_t hbm_enable = sde_connector_get_property(c_conn->base.state, CONNECTOR_PROP_HBM_ENABLE);
+		bool should_hbm = p_oplus_ofp_params->fp_press ||
+				(hbm_enable & OPLUS_OFP_PROPERTY_DIM_LAYER) ||
+				(hbm_enable & OPLUS_OFP_PROPERTY_FINGERPRESS_LAYER);
+		OFP_DEBUG("fp_press=%d, hbm_enable=%llu, should_hbm=%d\n",
+				p_oplus_ofp_params->fp_press, hbm_enable, should_hbm);
+
+		if (should_hbm && bl_level) {
+			rc = oplus_ofp_set_panel_hbm(c_conn, true);
+			if (rc) {
+				OFP_ERR("failed to set panel hbm on\n");
+			}
+		} else if (!should_hbm || !bl_level) {
+			rc = oplus_ofp_set_panel_hbm(c_conn, false);
+			if (rc) {
+				OFP_ERR("failed to set panel hbm off\n");
+			}
 		}
 	}
 
