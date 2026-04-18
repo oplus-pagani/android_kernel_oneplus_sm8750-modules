@@ -17,6 +17,7 @@
 #include "sde_encoder_phys.h"
 #include "sde_trace.h"
 #include <soc/oplus/touchpanel_event_notify.h>
+#include <linux/input.h>
 
 #ifdef OPLUS_FEATURE_DISPLAY_ADFR
 #include "oplus_adfr.h"
@@ -545,6 +546,146 @@ bool oplus_ofp_get_hbm_state(void)
 	return p_oplus_ofp_params->hbm_state;
 }
 
+/*
+ * Touch guard: after LHBM deactivates, the fingerprint-auth finger is still
+ * on the panel and will either lift or briefly slide. Without this filter,
+ * that trailing contact reaches the UI as a spurious tap on whatever view
+ * sits beneath UDFPS.
+ *
+ * We install an input_handler that drops *new* MT contacts started during
+ * the guard window. Contacts already down when the guard arms (typically
+ * the auth finger itself) pass through untouched so their TRACKING_ID=-1
+ * release reaches evdev clients — otherwise InputReader keeps the slot in
+ * its MT state forever and every later touch is reported as two fingers.
+ */
+#define OFP_GUARD_MS		500
+#define OFP_GUARD_MAX_SLOTS	32
+
+static unsigned long ofp_touch_guard_until; /* jiffies deadline; 0 = inactive */
+
+struct ofp_guard_handle {
+	struct input_handle h;
+	int current_slot;
+	u32 blocked_slots; /* bit N set: contact in slot N is being eaten */
+};
+
+static bool ofp_guard_active(void)
+{
+	unsigned long until = READ_ONCE(ofp_touch_guard_until);
+
+	if (!until)
+		return false;
+	if (time_after_eq(jiffies, until)) {
+		WRITE_ONCE(ofp_touch_guard_until, 0);
+		return false;
+	}
+	return true;
+}
+
+static bool ofp_input_filter(struct input_handle *handle,
+			     unsigned int type, unsigned int code, int value)
+{
+	struct ofp_guard_handle *gh = container_of(handle, struct ofp_guard_handle, h);
+	u32 slot_bit;
+
+	if (type != EV_ABS)
+		return false;
+
+	if (code == ABS_MT_SLOT) {
+		if (value >= 0 && value < OFP_GUARD_MAX_SLOTS)
+			gh->current_slot = value;
+		return false;
+	}
+
+	if (gh->current_slot < 0 || gh->current_slot >= OFP_GUARD_MAX_SLOTS)
+		return false;
+
+	slot_bit = BIT(gh->current_slot);
+
+	if (code == ABS_MT_TRACKING_ID) {
+		if (value >= 0) {
+			if (ofp_guard_active()) {
+				gh->blocked_slots |= slot_bit;
+				return true;
+			}
+			return false;
+		}
+		/* value == -1 (release): only eat if we ate the matching down,
+		 * so userspace's MT slot state stays consistent. */
+		if (gh->blocked_slots & slot_bit) {
+			gh->blocked_slots &= ~slot_bit;
+			return true;
+		}
+		return false;
+	}
+
+	return (gh->blocked_slots & slot_bit) != 0;
+}
+
+static int ofp_input_connect(struct input_handler *handler, struct input_dev *dev,
+			     const struct input_device_id *id)
+{
+	struct ofp_guard_handle *gh;
+	int ret;
+
+	gh = kzalloc(sizeof(*gh), GFP_KERNEL);
+	if (!gh)
+		return -ENOMEM;
+	gh->h.dev = dev;
+	gh->h.handler = handler;
+	gh->h.name = "ofp_touch_guard";
+	gh->current_slot = 0;
+
+	ret = input_register_handle(&gh->h);
+	if (ret) {
+		kfree(gh);
+		return ret;
+	}
+	ret = input_open_device(&gh->h);
+	if (ret) {
+		input_unregister_handle(&gh->h);
+		kfree(gh);
+		return ret;
+	}
+	return 0;
+}
+
+static void ofp_input_disconnect(struct input_handle *handle)
+{
+	struct ofp_guard_handle *gh = container_of(handle, struct ofp_guard_handle, h);
+
+	input_close_device(handle);
+	input_unregister_handle(handle);
+	kfree(gh);
+}
+
+static const struct input_device_id ofp_input_ids[] = {
+	{
+		.flags = INPUT_DEVICE_ID_MATCH_EVBIT | INPUT_DEVICE_ID_MATCH_ABSBIT,
+		.evbit = { BIT_MASK(EV_ABS) },
+		.absbit = { [BIT_WORD(ABS_MT_POSITION_X)] = BIT_MASK(ABS_MT_POSITION_X) },
+	},
+	{},
+};
+
+static struct input_handler ofp_input_handler = {
+	.filter     = ofp_input_filter,
+	.connect    = ofp_input_connect,
+	.disconnect = ofp_input_disconnect,
+	.name       = "ofp_touch_guard",
+	.id_table   = ofp_input_ids,
+};
+
+static bool ofp_touch_guard_registered;
+
+static void ofp_touch_guard_ensure_registered(void)
+{
+	if (!ofp_touch_guard_registered) {
+		if (input_register_handler(&ofp_input_handler) == 0)
+			ofp_touch_guard_registered = true;
+	}
+}
+
 static int oplus_ofp_set_hbm_state(bool hbm_state)
 {
 	struct oplus_ofp_params *p_oplus_ofp_params = oplus_ofp_get_params(oplus_ofp_display_id);
@@ -557,6 +698,13 @@ static int oplus_ofp_set_hbm_state(bool hbm_state)
 	}
 
 	OPLUS_OFP_TRACE_BEGIN("oplus_ofp_set_hbm_state");
+
+	if (!hbm_state && p_oplus_ofp_params->hbm_state) {
+		ofp_touch_guard_ensure_registered();
+		WRITE_ONCE(ofp_touch_guard_until,
+			   jiffies + msecs_to_jiffies(OFP_GUARD_MS));
+		OFP_INFO("touch guard armed for %dms\n", OFP_GUARD_MS);
+	}
 
 	p_oplus_ofp_params->hbm_state = hbm_state;
 	OFP_INFO("oplus_ofp_hbm_state:%d\n", hbm_state);
