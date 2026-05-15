@@ -5144,7 +5144,7 @@ static const struct oplus_mms_desc oplus_mms_gauge_desc = {
 	.item_num = ARRAY_SIZE(oplus_mms_gauge_item),
 	.update_items = oplus_mms_gauge_update_item,
 	.update_items_num = ARRAY_SIZE(oplus_mms_gauge_update_item),
-	.update_interval = 10000, /* ms */
+	.update_interval = 30000, /* ms */
 	.update = oplus_mms_gauge_update,
 	.set_update_mode = oplus_mms_gauge_read_mode_set,
 };
