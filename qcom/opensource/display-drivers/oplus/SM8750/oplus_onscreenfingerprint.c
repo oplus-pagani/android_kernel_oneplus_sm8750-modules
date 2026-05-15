@@ -756,6 +756,9 @@ static int oplus_ofp_set_aod_state(bool aod_state)
 	OFP_INFO("oplus_ofp_aod_state:%d\n", p_oplus_ofp_params->aod_state);
 	OPLUS_OFP_TRACE_INT("oplus_ofp_aod_state", p_oplus_ofp_params->aod_state);
 
+	if (oplus_ofp_ultra_low_power_aod_is_enabled())
+		p_oplus_ofp_params->ultra_low_power_aod_mode = aod_state ? 1 : 0;
+
 	OPLUS_OFP_TRACE_END("oplus_ofp_set_aod_state");
 
 	OFP_DEBUG("end\n");
@@ -4330,7 +4333,7 @@ int oplus_ofp_ultra_low_power_aod_update(void *sde_encoder_virt)
 	hbm_enable = sde_connector_get_property(c_conn->base.state, CONNECTOR_PROP_HBM_ENABLE);
 
 	if (!(hbm_enable & OPLUS_OFP_PROPERTY_ICON_LAYER)
-		&& (hbm_enable & OPLUS_OFP_PROPERTY_AOD_LAYER)
+		&& ((hbm_enable & OPLUS_OFP_PROPERTY_AOD_LAYER) || oplus_ofp_get_aod_state())
 			&& p_oplus_ofp_params->ultra_low_power_aod_mode) {
 		/* when icon layer disappear, enable ultra low power aod immediately */
 		if (!p_oplus_ofp_params->ultra_low_power_aod_state) {
