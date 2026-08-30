@@ -688,6 +688,18 @@ int oplus_ofp_property_update(void *sde_connector, void *sde_connector_state, in
 			OFP_INFO("oplus_ofp_fp_press set esd_pending:%d\n", atomic_read(&display->panel->oplus_panel.esd_pending));
 		}
 		p_oplus_ofp_params->hbm_enable = prop_val;
+
+		if (oplus_ofp_local_hbm_is_enabled() && oplus_ofp_local_hbm_unlocking_acceleration_is_enabled()) {
+			if ((prop_val & OPLUS_OFP_PROPERTY_FINGERPRESS_LAYER) ||
+			    (prop_val & OPLUS_OFP_PROPERTY_DIM_LAYER)) {
+				p_oplus_ofp_params->fp_press = true;
+			} else if (p_oplus_ofp_params->fp_press) {
+				p_oplus_ofp_params->fp_press = false;
+				OFP_INFO("oplus_ofp_fp_press:%d (fod bits dropped)\n", p_oplus_ofp_params->fp_press);
+				OPLUS_OFP_TRACE_INT("oplus_ofp_fp_press", p_oplus_ofp_params->fp_press);
+			}
+		}
+
 		OPLUS_OFP_TRACE_INT("oplus_ofp_hbm_enable", p_oplus_ofp_params->hbm_enable);
 
 		msm_property_set_dirty(&c_conn->property_info, &c_state->property_state, CONNECTOR_PROP_HBM_ENABLE);
