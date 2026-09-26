@@ -31,6 +31,7 @@ enum {
 static DEFINE_IDA(shell_temp_ida);
 static DEFINE_SPINLOCK(horae_lock);
 static int shell_temp[SHELL_MAX];
+static struct thermal_zone_device *shell_tzd[SHELL_MAX];
 
 struct horae_shell_temp {
 	struct thermal_zone_device *tzd;
@@ -101,6 +102,7 @@ static int horae_shell_probe(struct platform_device *pdev)
 		goto err_remove_id;
 	}
 	hst->tzd = tz_dev;
+	WRITE_ONCE(shell_tzd[hst->shell_id], tz_dev);
 
 	platform_set_drvdata(pdev, hst);
 
@@ -119,6 +121,7 @@ static int horae_shell_remove(struct platform_device *pdev)
 
 	if (hst) {
 		platform_set_drvdata(pdev, NULL);
+		WRITE_ONCE(shell_tzd[hst->shell_id], NULL);
 		thermal_zone_device_unregister(hst->tzd);
 		kfree(hst);
 	}
@@ -144,6 +147,7 @@ static ssize_t proc_shell_write(struct file *filp, const char __user *buf,
 	unsigned int index = 0;
 	char tmp[BUF_LEN + 1];
 	unsigned long flags;
+	struct thermal_zone_device *tz_dev;
 
 
 	if (count == 0)
@@ -176,6 +180,17 @@ static ssize_t proc_shell_write(struct file *filp, const char __user *buf,
 	spin_lock_irqsave(&horae_lock, flags);
 	shell_temp[index] = temp;
 	spin_unlock_irqrestore(&horae_lock, flags);
+
+	/*
+	 * shell zones are registered without trips, so updating the backing
+	 * value alone does not produce a thermal netlink sample. Notify the
+	 * thermal core explicitly so userspace governors can reevaluate their
+	 * thresholds as Horae publishes each new surface temperature.
+	 */
+	tz_dev = READ_ONCE(shell_tzd[index]);
+	if (tz_dev)
+		thermal_zone_device_update(tz_dev,
+					   THERMAL_EVENT_UNSPECIFIED);
 
 	return count;
 }
