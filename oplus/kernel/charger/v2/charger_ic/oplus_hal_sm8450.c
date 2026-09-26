@@ -7762,6 +7762,7 @@ static void *oplus_chg_8350_gauge_get_func(struct oplus_chg_ic_dev *ic_dev,
 
 struct oplus_chg_ic_virq oplus_chg_8350_gauge_virq_table[] = {
 	{ .virq_id = OPLUS_IC_VIRQ_ERR },
+	{ .virq_id = OPLUS_IC_VIRQ_RESUME },
 };
 
 static int oplus_chg_adsp_dpdm_switch_init(struct oplus_chg_ic_dev *ic_dev)
