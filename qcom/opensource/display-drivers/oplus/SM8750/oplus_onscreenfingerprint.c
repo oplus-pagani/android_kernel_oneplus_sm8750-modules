@@ -1179,7 +1179,14 @@ int oplus_ofp_property_update(void *sde_connector, void *sde_connector_state, in
 			if ((prop_val & OPLUS_OFP_PROPERTY_FINGERPRESS_LAYER) ||
 			    (prop_val & OPLUS_OFP_PROPERTY_DIM_LAYER)) {
 				p_oplus_ofp_params->fp_press = true;
-			} else if (p_oplus_ofp_params->fp_press) {
+			} else if (p_oplus_ofp_params->fp_press &&
+				   !READ_ONCE(p_oplus_ofp_params->fod_touch_down)) {
+				/*
+				 * The compositor drops these bits when the UDFPS
+				 * layer falls back to client composition, which
+				 * enrollment animations trigger right as capture
+				 * starts. Hold the press until touch up instead.
+				 */
 				p_oplus_ofp_params->fp_press = false;
 				OFP_INFO("oplus_ofp_fp_press:%d (fod bits dropped)\n", p_oplus_ofp_params->fp_press);
 				OPLUS_OFP_TRACE_INT("oplus_ofp_fp_press", p_oplus_ofp_params->fp_press);
@@ -4239,6 +4246,12 @@ int oplus_ofp_power_mode_handle(void *dsi_display, int power_mode)
 			OPLUS_OFP_TRACE_INT("oplus_ofp_doze_active", p_oplus_ofp_params->doze_active);
 		}
 
+		/* A touch up can be lost across power off; do not resume with lhbm on. */
+		if (READ_ONCE(p_oplus_ofp_params->fod_touch_down)) {
+			WRITE_ONCE(p_oplus_ofp_params->fod_touch_down, false);
+			p_oplus_ofp_params->fp_press = false;
+		}
+
 		if (oplus_ofp_get_aod_state()) {
 			rc = oplus_ofp_aod_off_handle(display);
 			if (rc) {
@@ -4706,6 +4719,22 @@ int oplus_ofp_touchpanel_event_notifier_call(struct notifier_block *nb, unsigned
 				if (tp_event->touch_state == 1)
 					ofp_evaluate_uiready_locked(owner, p_oplus_ofp_params, 0, false);
 				spin_unlock_irqrestore(&owner->state_lock, flags);
+			}
+
+			if (p_oplus_ofp_params->uiready_compat &&
+					oplus_ofp_local_hbm_is_enabled() &&
+					oplus_ofp_local_hbm_unlocking_acceleration_is_enabled()) {
+				WRITE_ONCE(p_oplus_ofp_params->fod_touch_down,
+						tp_event->touch_state == 1);
+				if (tp_event->touch_state != 1 && p_oplus_ofp_params->fp_press &&
+						!(READ_ONCE(p_oplus_ofp_params->hbm_enable) &
+						(OPLUS_OFP_PROPERTY_DIM_LAYER |
+						OPLUS_OFP_PROPERTY_FINGERPRESS_LAYER))) {
+					p_oplus_ofp_params->fp_press = false;
+					OFP_INFO("oplus_ofp_fp_press:%d (touch up)\n",
+							p_oplus_ofp_params->fp_press);
+					oplus_ofp_lhbm_handle(display);
+				}
 			}
 
 			if (tp_event->touch_state == 1) {

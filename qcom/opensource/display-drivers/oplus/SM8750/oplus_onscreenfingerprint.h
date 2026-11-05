@@ -214,6 +214,7 @@ struct oplus_ofp_params {
 	unsigned int pressed_icon_status;				/* indicates whether pressed icon has been displayed in panel module or not */
 	unsigned int notifier_chain_value;				/* ui ready notifier chain value */
 	atomic_t uiready_rearm_pending; /* resend READY once for a new touch */
+	bool fod_touch_down; /* keeps fp_press latched until touch up in compat mode */
 	struct workqueue_struct *uiready_event_wq;		/* a workqueue used to send uiready event */
 	struct work_struct uiready_event_work;			/* a work struct used to send uiready event */
 	struct hrtimer timer;							/* add for uiready notifier call chain */

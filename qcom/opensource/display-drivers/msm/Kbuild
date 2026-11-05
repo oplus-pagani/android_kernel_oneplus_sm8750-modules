@@ -345,6 +345,10 @@ msm_drm-$(OPLUS_FEATURE_DISPLAY_TEMP_COMPENSATION) += ../oplus/SM8750/oplus_disp
 
 msm_drm-$(OPLUS_FEATURE_DISPLAY_ONSCREENFINGERPRINT) += ../oplus/SM8750/oplus_onscreenfingerprint.o
 
+ifeq ($(CONFIG_OPLUS_OFP_UIREADY_COMPAT),y)
+ccflags-y += -DOPLUS_OFP_UIREADY_COMPAT=1
+endif
+
 msm_drm-$(OPLUS_FEATURE_TP_BASIC) += ../oplus/SM8750/oplus_display_notify_tp.o
 
 ccflags-$(OPLUS_FEATURE_DISPLAY) += \
